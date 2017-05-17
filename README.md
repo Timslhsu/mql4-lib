@@ -7,7 +7,9 @@ MQL4 Foundation Library For Professional Developers
 * [3. Usage](#usage)
   * [3.1 Basic Programs](#basic-programs)
   * [3.2 Collections](#collections)
-  * [3.3 Asynchronous Events](#asynchronous-events)
+  * [3.3 Maps](#maps)
+  * [3.4 Asynchronous Events](#asynchronous-events)
+  * [3.5 File System and IO](#file-system-and-io)
 
 ## Introduction
 
@@ -38,51 +40,95 @@ stable and can be used in production. Here are the main components:
 3. `Charts` directory contains several chart types and common chart tools
 4. `Trade` directory contains useful abstractions for trading
 5. `Utils` directory contains various utilities
+6. `UI` chart objects and UI controls (in progress)
+7. `OpenCL` brings OpenCL support to MT4 (in progress)
 
 ### Basic Programs
 
 In `Lang`, I abstract three Program types (Script, Indicator, and
  Expert Advisor) to three base classes that you can inherit.
 
-The general usage is as below:
+Basically, you write your program in a reusable class, and when
+you want to use them as standalone executables, you use macros
+to declare them.
 
+The macro distinguish between programs with and without input parameters. Here
+is a simple script without any input parameter:
+
+```c++
+#include <MQL4/Lang/Script.mqh>
+class MyScript: public Script
+{
+public:
+  // OnStart is now main
+  void main() {Print("Hello");}
+};
+
+// declare it: notice second parameter indicates the script has no input
+DECLARE_SCRIPT(MyScript,false)
 ```
-input string InpEaName = "My EA";
-input double InpBaseLot = 0.1;
 
+Here is another example, this time an Expert Advisor with input parameters:
+
+```c++
 #include <MQL4/Lang/ExpertAdvisor.mqh>
+
+class MyEaParam: public AppParam
+{
+  ObjectAttr(string,eaName,EaName);
+  ObjectAttr(double,baseLot,BaseLot);
+public:
+  // optionally override `check` method to validate paramters
+  // this method will be called before initialization of EA
+  // if this method returns false, then INIT_INCORRECT_PARAMETERS will
+  // be returned
+  // bool check(void) {return true;}
+};
 
 class MyEa: public ExpertAdvisor
 {
 private:
-  string m_name;
-  double m_baseLot;
+  MyEaParam *m_param;
 public:
-  void setName(string name) {m_name = name;}
-  void setBaseLot(double lot) {m_baseLot = lot;}
-
-  void main() {Print(m_name);}
+       MyEa(MyEaParam *param)
+       :m_param(param)
+      {
+         // Initialize EA in the constructor instead of OnInit;
+         // If failed, you call fail(message, returnCode)
+         // both paramters of `fail` is optional, with default return code INIT_FAIL
+         // if you don't call `fail`, the default return code is INIT_SUCCESS;
+      }
+      ~MyEa()
+      {
+         // Deinitialize EA in the destructor instead of OnDeinit
+         // getDeinitReason() to get deinitialization reason
+      }
+  // OnTick is now main
+  void main() {Print("Hello from " + m_param.getEaName());}
 };
 
-DECLARE_EA(MyEa,
-           PARAM(Name, InpEaName)
-           PARAM(BaseLot, InpBaseLot))
+// The code before this line can be put in a separate mqh header
+
+// We use macros to declare inputs
+// Notice the trailing semicolon at the end of each INPUT, it is needed
+// support custom display name because of some unknown rules from MetaQuotes
+BEGIN_INPUT(MyEaParam)
+  INPUT(string,EaName,"My EA"); // EA Name (Custom display name is supported)
+  INPUT(double,BaseLot,0.1);    // Base Lot
+END_INPUT
+
+DECLARE_EA(MyEa,true)  // true to indicate it has parameters
 ```
 
-You noticed that in the DECLARE_EA macro, the second part is not
-separated by comma, as MQL4 preprocessor does not support variable
-arguments for macros.
-
-The `PARAM` macro injects parameters to the EA by its setters. Just
+The `ObjectAttr` macro declares standard get/set methods for a class. Just
 follow the Java Beans(TM) convention.
 
-For Indicators and Scripts you can find their usage by reading the
-source code. I used some macro tricks to work around limits of MQL4. I
-will document the library in detail when I have the time.
+I used some macro tricks to work around limits of MQL4. I will document
+the library in detail when I have the time.
 
 With this approach, you can write reusable EAs, Scripts, or
 Indicators.  You do not need to worry about the OnInit, OnDeinit,
-OnStart, OnTick, etc.  You never use a input parameter directly in
+OnStart, OnTick, OnCalculate, etc.  You never use a input parameter directly in
 your EA. You can write a base EA, and extend it easily.
 
 ### Collections
@@ -98,7 +144,7 @@ Currently there are two list types:
 1. Collection/LinkedList is a Linked List implementation
 2. Collection/Vector is an array based implementation
 
-First I want to point out that MQL4 has some extremely useful undocumented
+First I'd like to point out some extremely useful undocumented MQL4/5
 features:
 
 1. class templates(!)
@@ -109,8 +155,8 @@ Though inheriting multiple interfaces is not possible now, I think this will be
 possible in the future.
  
 Among these features, `class template` is the most important because we can
-greatly simplify Collection code. I think these features are used by MetaQuotes
-to port .Net Regular Expression library to MQL.
+greatly simplify Collection code. These features are used by MetaQuotes
+to port .Net Regular Expression Library to MQL.
 
 With class templates and inheritance, I implemented a hierarchy:
 
@@ -127,6 +173,10 @@ Vector<int> intVector;
 
 To iterate through a collection, use its iterator, as iterators know what is
 the most efficient way to iterating.
+
+Threre are alao two macros for iteration: `foreach` and `foreachv`. You can
+`break` and `return` in the loop without worrying about resource leaks because
+we use `Iter` RAII class to wrap the iterator pointer.
 
 Here is a simple example:
 
@@ -159,14 +209,80 @@ void OnStart()
 
    PrintFormat("There are %d orders. ",list.size());
 
-   for(Iter<Order*> iter(list); !iter.end(); iter.next())
+   //--- Iter RAII class
+   for(Iter<Order*> it(list); !it.end(); it.next())
      {
-      Order*o=iter.current();
+      Order*o=it.current();
       Print(o.toString());
      }
+
+   //--- foreach macro: use it as the iterator variable
+   foreach(Order*,list)
+     {
+      Order*o=it.current();
+      Print(o.toString());
+     }
+
+   //--- foreachv macro: declare element varaible o in the second parameter
+   foreachv(Order*,o,list)
+     Print(o.toString());
+
   }
 //+------------------------------------------------------------------+
 ```
+
+### Maps
+
+Map (or dictionary) is extremely important for any non-trivial programs.
+Mql4-lib impelements an efficient Hash map using Murmur3 string hash. The
+implementation follows the CPython3 hash and it preserves insertion order.
+
+The HashMap interface is very simple. Below is a simple example counting words
+of the famous `Hamlet`:
+
+```c++
+#include <MQL4/Lang/Script.mqh>
+#include <MQL4/Collection/HashMap.mqh>
+#include <MQL4/Utils/File.mqh>
+
+class CountHamletWords: public Script
+  {
+public:
+   void              main()
+     {
+      TextFile txt("hamlet.txt", FILE_READ);
+      if(txt.valid())
+        {
+         HashMap<string,int>wordCount;
+         while(!txt.end() && !IsStopped())
+           {
+            string line= txt.readLine();
+            string words[];
+            StringSplit(line,' ',words);
+            int len=ArraySize(words);
+            if(len>0)
+              {
+               for(int i=0; i<len; i++)
+                 {
+                  int newCount=0;
+                  if(!wordCount.contains(words[i]))
+                     newCount=1;
+                  else
+                     newCount=wordCount[words[i]]+1;
+                  wordCount.set(words[i],newCount);
+                 }
+              }
+           }
+         Print("Total words: ",wordCount.size());
+         BEGIN_MAP_FOR(string,word,int,count,wordCount)
+            PrintFormat("%s: %d",word,count);
+         END_MAP_FOR
+        }
+     }
+  };
+DECLARE_SCRIPT(CountHamletWords,false)
+```
+
   
 ### Asynchronous Events
 
@@ -219,3 +335,113 @@ because of very strong anti-debugging measures.
 Inside MetaTrader terminal, you better use ChartEventCustom to
 send custom events.
 
+### File System and IO 
+
+MQL file functions by design directly operate on three types of files: Binary,
+Text, and CSV. To me, these types of files are supposed to form a layered
+relationship: CSV is a specialized Text, and Text specialized Binary (with
+encoding/decoding of text). But the functions are NOT designed this way, rather
+as a tangled mess by allowing various functions to operate on different types of
+files. For example, `FileReadString` behavior is totally different besed on what
+kind of file it's opearting: for Binary the unicode bytes (UTF-16 LE) are read
+with specified length, for Text the entire line is read (is FILE_ANSI flag is
+set the text is decoded based on codepage), and for CSV only a string field is
+read. I don't like this design, neither I have the energy and time to
+reimplement text encoding/decoding and type serializing/deserializing.
+
+So I wrote a `Utils/File` module, wrapping all file functions with a much
+cleaner interface, but without changing the whole design. There are five
+classes: `File` is a base class but you can not instantiate it; `BinaryFile`,
+`TextFile`, and `CsvFile` are the subclasses which are what you use in your
+code; and there is an interesting class `FileIterator` which impelemented
+standard `Iterator` interface, and you can use the same technique to iterate
+through directory files.
+
+Here is a example for TextFile and CsvFile:
+
+```c++
+#include <MQL4/Utils/File.mqh>
+
+void OnStart()
+  {
+   File::createFolder("TestFileApi");
+
+   TextFile txt("TestFileApi\\MyText.txt",FILE_WRITE);
+   txt.writeLine("你好，世界。");
+   txt.writeLine("Hello world.");
+
+//--- reopen closes the current file handle first
+   txt.reopen("TestFileApi\\MyText.txt",FILE_READ);
+   while(!txt.end())
+     {
+      Print(txt.readLine());
+     }
+
+   CsvFile csv("TestFileApi\\MyCsv.csv",FILE_WRITE);
+//--- write whole line as a text file
+   csv.writeLine("This,is one,CSV,file");
+
+//--- write fields one by one
+   csv.writeString("这是");
+   csv.writeDelimiter();
+   csv.writeInteger(1);
+   csv.writeDelimiter();
+   csv.writeBool(true);
+   csv.writeDelimiter();
+   csv.writeString("CSV");
+   csv.writeNewline();
+
+   csv.reopen("TestFileApi\\MyCsv.csv",FILE_READ);
+   for(int i=1; !csv.end(); i++)
+     {
+      Print("Line ",i);
+      //--- notice that you SHALL NOT directly use while(!csv.isLineEnding()) here
+      //--- or you will run into a infinite loop
+      do
+        {
+         Print("Field: ",csv.readString());
+        }
+      while(!csv.isLineEnding());
+     }
+```
+
+And here is an example for `FileIterator`:
+
+```c++
+#include <MQL4/Utils/File.mqh>
+
+int OnStart()
+{
+   for(FileIterator it("*"); !it.end(); it.next())
+     {
+      string name=it.current();
+      if(File::isDirectory(name))
+        {
+         Print("Directory: ",name);
+        }
+      else
+        {
+         Print("File: ",name);
+        }
+     }
+}
+```
+
+Or you can go fancy with the powerful `foreachfile` macro:
+
+```c++
+#include <MQL4/Utils/File.mqh>
+
+int OnStart()
+{
+//--- first parameter is the local variable *name* for current file name
+//--- second parameter is the filter pattern string
+   foreachfile(name,"*")
+     {
+      if(File::isDirectory(name))
+         Print("Directory: ",name);
+      else
+         Print("File: ",name);
+     }
+}
+```

@@ -8,17 +8,17 @@
 #include "App.mqh"
 #include "Event.mqh"
 
-#define DECLARE_EVENT_APP(AppClass,PARAM_SECTION) \
-DECLARE_APP(AppClass,PARAM_SECTION)\
-void OnTimer() {__app__.onTimer();}\
+#define DECLARE_EVENT_APP(AppClass,Boolean) \
+DECLARE_APP(AppClass,Boolean)\
+void OnTimer() {dynamic_cast<EventApp*>(App::Global).onTimer();}\
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)\
 {\
   if(IsKeydownMessage(lparam)){\
    ushort event;uint param;\
    DecodeKeydownMessage(lparam,dparam,event,param);\
-   __app__.onAppEvent(event,param);\
+   dynamic_cast<EventApp*>(App::Global).onAppEvent(event,param);\
   }else{\
-   __app__.onChartEvent(id,lparam,dparam,sparam);\
+   dynamic_cast<EventApp*>(App::Global).onChartEvent(id,lparam,dparam,sparam);\
   }\
 }
 //+------------------------------------------------------------------+
@@ -26,7 +26,14 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,const str
 //+------------------------------------------------------------------+
 class EventApp: public App
   {
+private:
+   bool              m_hasTimer;
+protected:
+   void              setupTimer(int seconds) {if(EventSetTimer(seconds))m_hasTimer=true;}
+   void              setupMillisTimer(int millis) {if(EventSetMillisecondTimer(millis))m_hasTimer=true;}
+   bool              hasTimer() const {return m_hasTimer;}
 public:
+                    ~EventApp() {if(m_hasTimer)EventKillTimer();}
    virtual void      onTimer()=0;
    virtual void      onChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)=0;
    virtual void      onAppEvent(const ushort event,const uint param)=0;

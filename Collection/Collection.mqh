@@ -4,7 +4,8 @@
 #property copyright "Copyright 2016, Li Ding"
 #property link      "dingmaotu@hotmail.com"
 #property strict
-#include "../Lang/Object.mqh"
+
+#include "../Lang/Pointer.mqh"
 //+------------------------------------------------------------------+
 //| Standard Iterator for all collections                            |
 //+------------------------------------------------------------------+
@@ -14,6 +15,19 @@ interface Iterator
    void      next();
    T         current() const;
    bool      end() const;
+   bool      set(T value);  // replace current value in target collection
+  };
+//+------------------------------------------------------------------+
+//| Do something on each elements of an iterable                     |
+//| Returns true if it is needed to delete this element              |
+//+------------------------------------------------------------------+
+template<typename T>
+class ElementOperator
+  {
+public:
+   virtual void      begin() {}
+   virtual void      end() {}
+   virtual bool      operate(T value)=0;
   };
 //+------------------------------------------------------------------+
 //| A collection must be iterable                                    |
@@ -24,20 +38,28 @@ interface Iterable
    Iterator<T>*iterator() const;
   };
 //+------------------------------------------------------------------+
-//| Wraps the iterator of a collection for RAII                      |
+//| This is the utility class for implementing iterator RAII         |
+//| assign and trueForOnce is for implementing foreach               |
 //+------------------------------------------------------------------+
 template<typename T>
-class Iter: public Iterator<T>
+class Iter:public Iterator<T>
   {
 private:
-   Iterator<T>*m_iterator;
+   Iterator<T>*m_it;
+   int               m_condition;
 public:
-                     Iter(const Iterable<T>&t):m_iterator(t.iterator()){}
-   virtual          ~Iter() {SafeDelete(m_iterator);}
-   bool              end() const {return m_iterator.end();}
-   void              next() {m_iterator.next();}
-   T                 current() const {return m_iterator.current();}
+                     Iter(const Iterable<T>&it):m_it(it.iterator()),m_condition(0) {}
+                    ~Iter() {SafeDelete(m_it);}
+   void              next() {m_it.next();}
+   T                 current() const {return m_it.current();}
+   bool              end() const {return m_it.end();}
+   bool              set(T value) {return m_it.set(value);}
+
+   bool              trueForOnce() {return m_condition++==0;}
+   bool              assign(T &var) {if(m_it.end()) return false; else {var=m_it.current();return true;}}
   };
+#define foreach(Type,Iterable) for(Iter<Type> it(Iterable);!it.end();it.next())
+#define foreachv(Type,Var,Iterable) for(Iter<Type> it(Iterable);it.trueForOnce();) for(Type Var;it.assign(Var);it.next())
 //+------------------------------------------------------------------+
 //| Base class for collections                                       |
 //+------------------------------------------------------------------+
@@ -68,9 +90,9 @@ public:
 template<typename T>
 bool Collection::contains(const T value) const
   {
-   for(Iter<T>iter(this);!iter.end();iter.next())
+   foreach(T,this)
      {
-      if(IsEqual(iter.current(),value)) return true;
+      if(it.current()==value) return true;
      }
    return false;
   }
@@ -96,9 +118,9 @@ template<typename T>
 bool Collection::addAll(const Collection<T>&collection)
   {
    bool added=false;
-   for(Iter<T>iter(collection); !iter.end(); iter.next())
+   foreach(T,collection)
      {
-      bool tmp=add(iter.current());
+      bool tmp=add(it.current());
       if(!added) added=tmp;
      }
    return added;

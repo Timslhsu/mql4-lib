@@ -5,8 +5,7 @@
 #property link      "dingmaotu@hotmail.com"
 #property strict
 
-#include "Array.mqh"
-#include "../Lang/Pointer.mqh"
+#include "../Lang/Array.mqh"
 #include "Collection.mqh"
 //+------------------------------------------------------------------+
 //| Generic Vector                                                   |
@@ -48,16 +47,7 @@ public:
 template<typename T>
 bool Vector::remove(const T value)
   {
-   int s=size();
-   int index=-1;
-   for(int i=0; i<s; i++)
-     {
-      if(IsEqual(value,m_array[i]))
-        {
-         index=i;
-         break;
-        }
-     }
+   int index=m_array.index(value);
    if(index>=0)
      {
       SafeDelete(m_array[index]);
@@ -76,11 +66,12 @@ class VectorIterator: public Iterator<T>
 private:
    int               m_index;
    const int         m_size;
-   const             Vector<T>*m_vector;
+   Vector<T>*m_vector;
 public:
-                     VectorIterator(const Vector<T>&v):m_index(0),m_size(v.size()),m_vector(GetPointer(v)) {}
+                     VectorIterator(const Vector<T>&v):m_index(0),m_size(v.size()),m_vector((Vector<T>*)GetPointer(v)) {}
    bool              end() const {return m_index>=m_size;}
    void              next() {if(!end()){m_index++;}}
    T                 current() const {return m_vector.get(m_index);}
+   bool              set(T value) {m_vector.set(m_index,value);return true;}
   };
 //+------------------------------------------------------------------+
